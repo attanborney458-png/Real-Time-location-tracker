@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real-Time Location Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --fg: #14211f;
+    --muted: #5b6b68;
+    --line: #dbe3e1;
+    --accent: #0b7a6e;
+    --accent-fg: #ffffff;
+    --warn: #b45309;
+    --bad: #b42318;
+    --good: #067647;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+  header { padding: 18px max(16px, 4vw); border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 1.25rem; letter-spacing: -0.01em; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 0.9rem; }
+  nav { display: flex; gap: 4px; padding: 10px max(16px, 4vw) 0; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; }
+  nav button { border: 0; background: none; padding: 10px 14px; font: inherit; color: var(--muted); cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  nav button:focus-visible, .btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  main { padding: 16px max(16px, 4vw) 40px; }
+  .layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 820px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+  .card h2 { margin: 0 0 8px; font-size: 1rem; }
+  .card p { margin: 0 0 12px; color: var(--muted); font-size: 0.9rem; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .btn { border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); padding: 9px 14px; border-radius: 6px; font: inherit; font-weight: 600; cursor: pointer; }
+  .btn.secondary { background: transparent; color: var(--accent); }
+  .btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  input[type="text"] { flex: 1; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--bg); color: var(--fg); }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 0.9rem; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .status { font-size: 0.85rem; padding: 8px 10px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); margin-bottom: 12px; }
+  .status.ok { color: var(--good); }
+  .status.err { color: var(--bad); }
+  #map { height: 62vh; min-height: 380px; border-radius: 8px; border: 1px solid var(--line); z-index: 0; }
+  .check { display: flex; gap: 8px; align-items: center; font-size: 0.9rem; margin-bottom: 12px; }
+  .note { font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
+  .report { max-width: 860px; }
+  .report h2 { font-size: 1.15rem; margin: 24px 0 8px; }
+  .report h3 { font-size: 1rem; margin: 18px 0 6px; }
+  .report p, .report li { color: var(--fg); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 560px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Real-Time Location Tracker</h1>
+  <p>Track a laptop by IP address, or a person carrying a phone by GPS, and compare how accurate each method is.</p>
+</header>
+
+<nav role="tablist" aria-label="Tracking mode">
+  <button role="tab" id="tab-ip" aria-selected="true" aria-controls="view-track">Laptop (IP address)</button>
+  <button role="tab" id="tab-gps" aria-selected="false" aria-controls="view-track">Phone (GPS)</button>
+  <button role="tab" id="tab-report" aria-selected="false" aria-controls="view-report">Research notes</button>
+</nav>
+
+<main>
+  <!-- TRACKING VIEW -->
+  <div id="view-track" class="layout">
+    <div>
+      <!-- IP panel -->
+      <section id="panel-ip" class="card">
+        <h2>Locate a laptop by IP address</h2>
+        <p>Looks up the public IP address of this device, or any IP you enter, and plots the estimated position.</p>
+        <div class="row"><button class="btn" id="ipMine">Find my IP location</button></div>
+        <div class="row">
+          <input type="text" id="ipInput" placeholder="Or enter an IP, e.g. 8.8.8.8" aria-label="IP address to look up" inputmode="decimal">
+          <button class="btn secondary" id="ipLookup">Look up</button>
+        </div>
+        <div class="status" id="ipStatus">Ready.</div>
+        <dl id="ipInfo">
+          <dt>IP address</dt><dd id="ip-addr">-</dd>
+          <dt>City / Region</dt><dd id="ip-city">-</dd>
+          <dt>Country</dt><dd id="ip-country">-</dd>
+          <dt>ISP / Network</dt><dd id="ip-isp">-</dd>
+          <dt>Time zone</dt><dd id="ip-tz">-</dd>
+          <dt>Coordinates</dt><dd id="ip-coord">-</dd>
+        </dl>
+        <div class="row" style="margin-top:14px">
+          <button class="btn secondary" id="ipPrecise">Show my real position (Wi-Fi / GPS)</button>
+        </div>
+        <div class="status" id="preciseStatus">An IP address only reveals your internet provider's regional hub, so it can be far off. This button asks the device itself and shows how far the IP estimate was.</div>
+        <p class="note">The circle is a rough 25 km uncertainty radius. IP positions usually point to the ISP's regional hub, not the building.</p>
+      </section>
+
+      <!-- GPS panel -->
+      <section id="panel-gps" class="card" hidden>
+        <h2>Track a phone with GPS</h2>
+        <p>Streams live position from the device's location sensors and draws the path as it moves. Open this page on a phone and allow location access.</p>
+        <div class="row">
+          <button class="btn" id="pinBtn">Locate me now (within 10 m)</button>
+        </div>
+        <div class="status" id="pinStatus">Press the button to wait for a precise GPS fix and mark it on the map.</div>
+        <div class="row">
+          <button class="btn" id="gpsStart">Start tracking</button>
+          <button class="btn secondary" id="gpsStop" disabled>Stop</button>
+        </div>
+        <label class="check"><input type="checkbox" id="follow" checked> Keep the map centred on me</label>
+        <label class="check"><input type="checkbox" id="highAcc" checked> High accuracy (GPS, uses more battery)</label>
+        <div class="status" id="gpsStatus">Ready.</div>
+        <dl>
+          <dt>Latitude</dt><dd id="g-lat">-</dd>
+          <dt>Longitude</dt><dd id="g-lng">-</dd>
+          <dt>Accuracy</dt><dd id="g-acc">-</dd>
+          <dt>Speed</dt><dd id="g-speed">-</dd>
+          <dt>Heading</dt><dd id="g-head">-</dd>
+          <dt>Distance travelled</dt><dd id="g-dist">0 m</dd>
+          <dt>Points recorded</dt><dd id="g-count">0</dd>
+          <dt>Last update</dt><dd id="g-time">-</dd>
+        </dl>
+        <div class="row" style="margin-top:14px">
+          <button class="btn secondary" id="gpsCsv" disabled>Export CSV</button>
+          <button class="btn danger" id="gpsClear" disabled>Clear path</button>
+        </div>
+        <p class="note">Location access needs HTTPS or localhost. Opening the file directly may be blocked by some browsers, so use the local server steps in the README.</p>
+      </section>
+    </div>
+
+    <div>
+      <div id="mapFail" class="status err" hidden>The map could not load. Check your internet connection or ad blocker and reload the page. Location details below still work.</div>
+      <div id="map" role="application" aria-label="Map showing tracked location"></div>
+    </div>
+  </div>
+
+  <!-- RESEARCH VIEW -->
+  <article id="view-report" class="report" hidden>
+    <h2>1. How IP geolocation works</h2>
+    <p>Every device on the internet is reached through a public IP address. IP addresses are handed out in blocks to ISPs and organisations by regional registries (AFRINIC, ARIN, RIPE and others). Geolocation providers build databases that map those blocks to places. They combine registry records, ISP-supplied data, network routing and latency measurements, and sometimes location data collected from apps and Wi-Fi networks. A lookup finds the block that contains the address and returns the place linked to it.</p>
+    <h3>Accuracy and limitations</h3>
+    <ul>
+      <li><strong>Country level</strong> is usually reliable (roughly 95-99%).</li>
+      <li><strong>City level</strong> is often right for fixed broadband, but frequently wrong by tens of kilometres.</li>
+      <li><strong>Mobile networks</strong> are the weakest case. Carrier traffic often exits through a gateway in a different city from the user.</li>
+      <li><strong>VPNs, proxies and Tor</strong> show the exit server's location, not the real one.</li>
+      <li><strong>Carrier-grade NAT</strong> puts many customers behind one shared address, so the result describes the carrier, not the person.</li>
+      <li><strong>Stale data.</strong> Blocks get re-assigned and databases lag behind, so results can be outdated.</li>
+      <li><strong>No street address.</strong> The coordinates returned are typically the centre of a city or region, which is why the map shows an uncertainty circle.</li>
+      <li><strong>Privacy and consent.</strong> The target never has to grant permission, so this method must only be used on devices you own or are authorised to track.</li>
+    </ul>
+
+    <h2>2. GPS versus cell tower triangulation</h2>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Aspect</th><th>GPS (satellites)</th><th>Cell tower triangulation</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">How it works</th><td>The phone receives timing signals from at least four satellites and calculates its position.</td><td>The network measures signal strength, timing or angle to several towers and estimates where the phone sits between them.</td></tr>
+        <tr><th scope="row">Typical accuracy</th><td>About 3-10 m in open sky.</td><td>About 50 m to 1 km in cities, several km in rural areas.</td></tr>
+        <tr><th scope="row">Indoors / urban canyons</th><td>Weak. Buildings block or reflect the signal.</td><td>Works indoors, as long as there is network coverage.</td></tr>
+        <tr><th scope="row">Time to first fix</th><td>Seconds to a minute (faster with assisted GPS).</td><td>Near instant.</td></tr>
+        <tr><th scope="row">Battery use</th><td>Higher, the GPS chip runs continuously.</td><td>Lower, the phone is already talking to towers.</td></tr>
+        <tr><th scope="row">Needs data or network</th><td>No. Satellites work without a SIM or data plan.</td><td>Yes. Needs cellular coverage.</td></tr>
+        <tr><th scope="row">Who controls it</th><td>The device and the user's permission.</td><td>The network operator, which can locate a phone without app permission.</td></tr>
+        <tr><th scope="row">Coverage gaps</th><td>Tunnels, dense forest, deep indoors.</td><td>Remote areas with few towers.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <h3>What this app uses</h3>
+    <p>The browser's Geolocation API picks the best source on its own. With high accuracy on, a phone uses GPS. Otherwise, or indoors, the browser falls back to Wi-Fi and cell data. The <em>accuracy</em> value in the GPS tab shows the radius, in metres, within which the browser is 68% sure the device sits.</p>
+
+    <h2>3. Privacy and ethics</h2>
+    <p>Location is sensitive personal data. Track only people who have agreed, tell them clearly what is collected, store as little as possible, and delete it when it is no longer needed. In Uganda, the Data Protection and Privacy Act, 2019 treats personal data, including location, as requiring consent and a lawful purpose.</p>
+  </article>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// If the map library could not load (offline, blocked), keep the page usable: show a notice and
+// replace Leaflet with a do-nothing stand-in so the details panels still work.
+if (typeof window.L === 'undefined') {
+  window.L = new Proxy(function () {}, {
+    get: function () { return window.L; },
+    apply: function () { return window.L; }
+  });
+  document.getElementById('mapFail').hidden = false;
+}
+</script>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Map ----------
+  var map = L.map('map').setView([1.3733, 32.2903], 6); // Uganda
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  var ipLayer = L.layerGroup().addTo(map);
+  var gpsLayer = L.layerGroup().addTo(map);
+
+  // ---------- Tabs ----------
+  var tabs = { ip: document.getElementById('tab-ip'), gps: document.getElementById('tab-gps'), report: document.getElementById('tab-report') };
+  var viewTrack = document.getElementById('view-track');
+  var viewReport = document.getElementById('view-report');
+  var panelIp = document.getElementById('panel-ip');
+  var panelGps = document.getElementById('panel-gps');
+
+  function showTab(name) {
+    Object.keys(tabs).forEach(function (k) { tabs[k].setAttribute('aria-selected', String(k === name)); });
+    viewReport.hidden = name !== 'report';
+    viewTrack.hidden = name === 'report';
+    panelIp.hidden = name !== 'ip';
+    panelGps.hidden = name !== 'gps';
+    if (name === 'ip') { map.removeLayer(gpsLayer); map.addLayer(ipLayer); map.addLayer(truthLayer); }
+    if (name === 'gps') { map.removeLayer(ipLayer); map.removeLayer(truthLayer); map.addLayer(gpsLayer); }
+    if (name === 'gps' && window.isSecureContext === false) { setStatus($('gpsStatus'), INSECURE_MSG, 'err'); }
+    if (name !== 'report') setTimeout(function () { map.invalidateSize(); }, 50);
+  }
+  tabs.ip.onclick = function () { showTab('ip'); };
+  tabs.gps.onclick = function () { showTab('gps'); };
+  tabs.report.onclick = function () { showTab('report'); };
+
+  function $(id) { return document.getElementById(id); }
+  function setStatus(el, msg, cls) { el.textContent = msg; el.className = 'status' + (cls ? ' ' + cls : ''); }
+
+  // ---------- IP tracking ----------
+  var ipStatus = $('ipStatus');
+
+  // Several free lookup services, tried in order. Each returns the same shape.
+  function getJson(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) { throw new Error('HTTP ' + r.status); }
+      return r.json();
+    });
+  }
+  var providers = [
+    { name: 'ipwho.is', run: function (ip) {
+        return getJson('https://ipwho.is/' + (ip ? encodeURIComponent(ip) : '')).then(function (d) {
+          if (!d.success) { var e = new Error(d.message || 'Lookup failed'); e.final = true; throw e; }
+          return { ip: d.ip, city: d.city, region: d.region, country: d.country,
+                   isp: d.connection && (d.connection.isp || d.connection.org),
+                   tz: d.timezone && d.timezone.id, lat: d.latitude, lng: d.longitude };
+        });
+    } },
+    { name: 'ipapi.co', run: function (ip) {
+        return getJson('https://ipapi.co/' + (ip ? encodeURIComponent(ip) + '/' : '') + 'json/').then(function (d) {
+          if (d.error) { throw new Error(d.reason || 'Lookup failed'); }
+          return { ip: d.ip, city: d.city, region: d.region, country: d.country_name,
+                   isp: d.org, tz: d.timezone, lat: d.latitude, lng: d.longitude };
+        });
+    } },
+    { name: 'geojs.io', run: function (ip) {
+        return getJson('https://get.geojs.io/v1/ip/geo' + (ip ? '/' + encodeURIComponent(ip) : '') + '.json').then(function (d) {
+          return { ip: d.ip, city: d.city, region: d.region, country: d.country,
+                   isp: d.organization_name, tz: d.timezone, lat: parseFloat(d.latitude), lng: parseFloat(d.longitude) };
+        });
+    } }
+  ];
+
+  function isPrivateIp(ip) {
+    if (/^(10\.|127\.|192\.168\.|169\.254\.|0\.)/.test(ip)) { return true; }
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) { return true; }
+    if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip)) { return true; } // carrier-grade NAT
+    return /^(::1$|fc|fd|fe80)/i.test(ip);
+  }
+
+  var lastIp = null;      // last IP estimate {lat, lng}
+  var truthLayer = L.layerGroup().addTo(map); // device-reported position on the IP tab
+
+  function showIpResult(d) {
+    lastIp = { lat: d.lat, lng: d.lng };
+    truthLayer.clearLayers();
+    $('ip-addr').textContent = d.ip;
+    $('ip-city').textContent = [d.city, d.region].filter(Boolean).join(', ') || '-';
+    $('ip-country').textContent = d.country || '-';
+    $('ip-isp').textContent = d.isp || '-';
+    $('ip-tz').textContent = d.tz || '-';
+    $('ip-coord').textContent = d.lat.toFixed(4) + ', ' + d.lng.toFixed(4);
+
+    ipLayer.clearLayers();
+    var pos = [d.lat, d.lng];
+    L.marker(pos).addTo(ipLayer).bindPopup('<strong>' + d.ip + '</strong><br>' + (d.city || '') + ', ' + (d.country || '')).openPopup();
+    var circle = L.circle(pos, { radius: 25000, color: '#0b7a6e', fillOpacity: 0.12 }).addTo(ipLayer);
+    map.fitBounds(circle.getBounds());
+  }
+
+  function lookupIp(ip) {
+    if (ip && isPrivateIp(ip)) {
+      setStatus(ipStatus, ip + ' is a private address (used inside home or office networks), so it has no location. ' +
+        'Leave the box empty and press "Find my IP location" to use your public IP instead.', 'err');
+      return;
+    }
+    setStatus(ipStatus, 'Looking up' + (ip ? ' ' + ip : ' your IP') + '...');
+    var failures = [];
+    var i = 0;
+    (function next() {
+      if (i >= providers.length) {
+        setStatus(ipStatus, 'Could not look up the address. ' + failures.join('; ') +
+          '. Check your internet connection and turn off any ad blocker or VPN, then try again.', 'err');
+        return;
+      }
+      var p = providers[i++];
+      p.run(ip).then(function (d) {
+        if (!d || !isFinite(d.lat) || !isFinite(d.lng)) { throw new Error('no coordinates returned'); }
+        showIpResult(d);
+        setStatus(ipStatus, 'Located ' + d.ip + ' (via ' + p.name + '). This is an estimate, not an exact position.', 'ok');
+      }).catch(function (e) {
+        if (e.final) { // the service answered and rejected the address, so another service will not help
+          setStatus(ipStatus, 'Could not look up that address: ' + e.message + '. Check that it is a valid public IPv4 or IPv6 address.', 'err');
+          return;
+        }
+        failures.push(p.name + ': ' + (e.message === 'Failed to fetch' ? 'blocked or unreachable' : e.message));
+        next();
+      });
+    })();
+  }
+  // Secure-context check: browsers block location on plain http (except localhost) and on files opened from storage.
+  var INSECURE_MSG = 'Your browser blocks location on this page because it is not on HTTPS. ' +
+    'Open the app from an https:// address (GitHub Pages or Netlify) or from localhost, not from a saved file or a http:// link.';
+  var secure = window.isSecureContext !== false;
+
+  $('ipPrecise').onclick = function () {
+    var st = $('preciseStatus');
+    if (!secure) { setStatus(st, INSECURE_MSG, 'err'); return; }
+    if (!('geolocation' in navigator)) { setStatus(st, 'This browser does not support geolocation.', 'err'); return; }
+    setStatus(st, 'Asking the device for its position...');
+    navigator.geolocation.getCurrentPosition(function (p) {
+      var c = p.coords, ll = [c.latitude, c.longitude];
+      truthLayer.clearLayers();
+      L.circle(ll, { radius: c.accuracy, color: '#b45309', weight: 1, fillOpacity: 0.12 }).addTo(truthLayer);
+      L.marker(ll).addTo(truthLayer).bindPopup('<strong>Device position</strong><br>±' + Math.round(c.accuracy) + ' m').openPopup();
+      var msg = 'Device position: ' + c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5) + ' (±' + Math.round(c.accuracy) + ' m).';
+      if (lastIp) {
+        var d = haversine(lastIp, { lat: c.latitude, lng: c.longitude });
+        msg += ' The IP estimate was ' + (d >= 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d) + ' m') + ' away from it.';
+        map.fitBounds(L.latLngBounds([[lastIp.lat, lastIp.lng], ll]).pad(0.3));
+      } else {
+        map.setView(ll, 16);
+        msg += ' Run an IP lookup first to compare it with this position.';
+      }
+      setStatus(st, msg, 'ok');
+    }, function (err) {
+      setStatus(st, err.code === 1
+        ? 'Location was denied. Allow location for this site in your browser settings, then try again.'
+        : err.code === 2 ? 'The device could not determine its position. Turn on location services and Wi-Fi.'
+        : 'Timed out. Try again.', 'err');
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  };
+
+  $('ipMine').onclick = function () { lookupIp(''); };
+  $('ipLookup').onclick = function () {
+    var v = $('ipInput').value.trim();
+    if (!v) { setStatus(ipStatus, 'Type an IP address first.', 'err'); return; }
+    lookupIp(v);
+  };
+  $('ipInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') { $('ipLookup').click(); } });
+
+  // ---------- GPS tracking ----------
+  var gpsStatus = $('gpsStatus');
+  var watchId = null;
+  var track = [];          // {lat, lng, acc, t}
+  var totalDist = 0;
+  var line = L.polyline([], { color: '#0b7a6e', weight: 4 }).addTo(gpsLayer);
+  var marker = null, accCircle = null;
+
+  function haversine(a, b) {
+    var R = 6371000, toRad = Math.PI / 180;
+    var dLat = (b.lat - a.lat) * toRad, dLng = (b.lng - a.lng) * toRad;
+    var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+  function fmtDist(m) { return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m'; }
+
+  function onPosition(p) {
+    var c = p.coords;
+    var pt = { lat: c.latitude, lng: c.longitude, acc: c.accuracy, t: p.timestamp };
+    var last = track[track.length - 1];
+    // ignore jitter: only extend the path if we moved more than the reported error or 5 m
+    if (!last || haversine(last, pt) > Math.max(5, Math.min(c.accuracy, 30) / 2)) {
+      if (last) { totalDist += haversine(last, pt); }
+      track.push(pt);
+      line.addLatLng([pt.lat, pt.lng]);
+    }
+    var ll = [pt.lat, pt.lng];
+    if (!marker) { marker = L.circleMarker(ll, { radius: 8, color: '#fff', weight: 2, fillColor: '#0b7a6e', fillOpacity: 1 }).addTo(gpsLayer); }
+    else { marker.setLatLng(ll); }
+    if (!accCircle) { accCircle = L.circle(ll, { radius: c.accuracy, color: '#0b7a6e', weight: 1, fillOpacity: 0.1 }).addTo(gpsLayer); }
+    else { accCircle.setLatLng(ll); accCircle.setRadius(c.accuracy); }
+
+    $('g-lat').textContent = pt.lat.toFixed(6);
+    $('g-lng').textContent = pt.lng.toFixed(6);
+    $('g-acc').textContent = '±' + Math.round(c.accuracy) + ' m';
+    $('g-speed').textContent = c.speed != null ? (c.speed * 3.6).toFixed(1) + ' km/h' : '-';
+    $('g-head').textContent = c.heading != null && !isNaN(c.heading) ? Math.round(c.heading) + '°' : '-';
+    $('g-dist').textContent = fmtDist(totalDist);
+    $('g-count').textContent = String(track.length);
+    $('g-time').textContent = new Date(p.timestamp).toLocaleTimeString();
+    $('gpsCsv').disabled = false;
+    $('gpsClear').disabled = false;
+    setStatus(gpsStatus, 'Tracking. Accuracy ' + Math.round(c.accuracy) + ' m.', 'ok');
+
+    if ($('follow').checked) {
+      if (track.length <= 1) { map.setView(ll, 17); } else { map.panTo(ll); }
+    }
+  }
+
+  function onError(err) {
+    var msg = {
+      1: 'Permission denied. Allow location access for this site in your browser settings.',
+      2: 'Position unavailable. Move to an open area or check that location services are on.',
+      3: 'Timed out waiting for a position. Trying again.'
+    }[err.code] || err.message;
+    if (err.code === 1) { stopGps(); }
+    setStatus(gpsStatus, msg, 'err');
+  }
+
+  function startGps() {
+    if (!secure) { setStatus(gpsStatus, INSECURE_MSG, 'err'); return; }
+    if (!('geolocation' in navigator)) { setStatus(gpsStatus, 'This browser does not support geolocation.', 'err'); return; }
+    setStatus(gpsStatus, 'Waiting for the first position fix...');
+    watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+      enableHighAccuracy: $('highAcc').checked, maximumAge: 0, timeout: 20000
+    });
+    $('gpsStart').disabled = true; $('gpsStop').disabled = false; $('highAcc').disabled = true;
+  }
+  function stopGps() {
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    $('gpsStart').disabled = false; $('gpsStop').disabled = true; $('highAcc').disabled = false;
+    setStatus(gpsStatus, 'Stopped. ' + track.length + ' points recorded.');
+  }
+  // ---------- Locate me now: wait for a precise fix, then pin it ----------
+  var PIN_TARGET_M = 10, PIN_TIMEOUT_MS = 60000;
+  var pinWatch = null, pinTimer = null, pinBest = null, pinMarker = null, pinCircle = null;
+  var pinStatus = $('pinStatus');
+
+  function endPinSearch() {
+    if (pinWatch !== null) { navigator.geolocation.clearWatch(pinWatch); pinWatch = null; }
+    clearTimeout(pinTimer); pinTimer = null;
+    $('pinBtn').textContent = 'Locate me now (within ' + PIN_TARGET_M + ' m)';
+    $('pinBtn').classList.remove('danger');
+  }
+
+  function placePin(c, reached) {
+    var ll = [c.latitude, c.longitude];
+    if (pinMarker) { gpsLayer.removeLayer(pinMarker); }
+    if (pinCircle) { gpsLayer.removeLayer(pinCircle); }
+    pinCircle = L.circle(ll, { radius: c.accuracy, color: '#b45309', weight: 1, fillOpacity: 0.12 }).addTo(gpsLayer);
+    pinMarker = L.marker(ll).addTo(gpsLayer).bindPopup(
+      '<strong>You are here</strong><br>' + c.latitude.toFixed(6) + ', ' + c.longitude.toFixed(6) +
+      '<br>Accuracy ±' + Math.round(c.accuracy) + ' m').openPopup();
+    map.setView(ll, 18);
+    $('g-lat').textContent = c.latitude.toFixed(6);
+    $('g-lng').textContent = c.longitude.toFixed(6);
+    $('g-acc').textContent = '±' + Math.round(c.accuracy) + ' m';
+    $('g-time').textContent = new Date().toLocaleTimeString();
+    setStatus(pinStatus,
+      reached ? 'Located within ±' + Math.round(c.accuracy) + ' m: ' + c.latitude.toFixed(6) + ', ' + c.longitude.toFixed(6)
+              : 'Best fix found is only ±' + Math.round(c.accuracy) +
+                ' m. Move outdoors with a clear view of the sky and try again: ' + c.latitude.toFixed(6) + ', ' + c.longitude.toFixed(6),
+      reached ? 'ok' : 'err');
+  }
+
+  $('pinBtn').onclick = function () {
+    if (pinWatch !== null) { // pressed again while searching: stop and use the best reading so far
+      var best = pinBest; endPinSearch();
+      if (best) { placePin(best, best.accuracy <= PIN_TARGET_M); } else { setStatus(pinStatus, 'Search cancelled.'); }
+      return;
+    }
+    if (!secure) { setStatus(pinStatus, INSECURE_MSG, 'err'); return; }
+    if (!('geolocation' in navigator)) { setStatus(pinStatus, 'This browser does not support geolocation.', 'err'); return; }
+    pinBest = null;
+    setStatus(pinStatus, 'Waiting for a GPS fix...');
+    $('pinBtn').textContent = 'Searching... press to stop';
+    $('pinBtn').classList.add('danger');
+    pinWatch = navigator.geolocation.watchPosition(function (p) {
+      var c = p.coords;
+      if (!pinBest || c.accuracy < pinBest.accuracy) {
+        pinBest = { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy };
+      }
+      if (c.accuracy <= PIN_TARGET_M) {
+        endPinSearch(); placePin(pinBest, true);
+      } else {
+        setStatus(pinStatus, 'Improving the fix: now ±' + Math.round(c.accuracy) + ' m, waiting for ±' + PIN_TARGET_M + ' m...');
+      }
+    }, function (err) {
+      if (err.code === 2) { // signal dropped for a moment; keep waiting, the timer ends the search
+        setStatus(pinStatus, 'Signal lost for a moment. Still searching... Turn on location services and move outdoors if this continues.');
+        return;
+      }
+      endPinSearch();
+      setStatus(pinStatus, err.code === 1
+        ? 'Permission denied. Allow location access for this site in your browser settings.'
+        : 'Timed out waiting for a position. Move outdoors and try again.', 'err');
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: PIN_TIMEOUT_MS });
+    pinTimer = setTimeout(function () {
+      var best = pinBest; endPinSearch();
+      if (best) { placePin(best, best.accuracy <= PIN_TARGET_M); }
+      else { setStatus(pinStatus, 'No GPS fix within ' + (PIN_TIMEOUT_MS / 1000) + ' s. Move outdoors and try again.', 'err'); }
+    }, PIN_TIMEOUT_MS);
+  };
+
+  $('gpsStart').onclick = startGps;
+  $('gpsStop').onclick = stopGps;
+
+  $('gpsClear').onclick = function () {
+    track = []; totalDist = 0; line.setLatLngs([]);
+    if (marker) { gpsLayer.removeLayer(marker); marker = null; }
+    if (accCircle) { gpsLayer.removeLayer(accCircle); accCircle = null; }
+    ['g-lat', 'g-lng', 'g-acc', 'g-speed', 'g-head', 'g-time'].forEach(function (id) { $(id).textContent = '-'; });
+    $('g-dist').textContent = '0 m'; $('g-count').textContent = '0';
+    $('gpsCsv').disabled = true; $('gpsClear').disabled = true;
+    setStatus(gpsStatus, watchId === null ? 'Ready.' : 'Path cleared. Still tracking.');
+  };
+
+  $('gpsCsv').onclick = function () {
+    var rows = ['timestamp,latitude,longitude,accuracy_m'];
+    track.forEach(function (p) { rows.push(new Date(p.t).toISOString() + ',' + p.lat + ',' + p.lng + ',' + p.acc); });
+    var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'gps-track.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  };
+
+  showTab('ip');
+})();
+</script>
+</body>
+</html>
